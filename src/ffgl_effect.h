@@ -32,14 +32,24 @@ namespace obsffgl {
 
 class FfglEffect {
  public:
-  explicit FfglEffect(obs_source_t* self);
+  /// Which OBS object this is standing behind.
+  ///
+  /// An FFGL *effect* takes a texture in and gives one back, which is an OBS
+  /// filter. An FFGL *source* takes no input at all, which is an OBS input —
+  /// and forcing one to be a filter means the operator has to invent a source
+  /// underneath it whose picture is then thrown away. Same plugin, same render
+  /// call; the difference is where the frame comes from and who decides how
+  /// big it is.
+  enum class Mode { filter, source };
+
+  FfglEffect(obs_source_t* self, Mode mode);
   ~FfglEffect();
 
   FfglEffect(const FfglEffect&) = delete;
   FfglEffect& operator=(const FfglEffect&) = delete;
 
   // ---- UI thread ----------------------------------------------------------
-  static void defaults(obs_data_t* settings);
+  static void defaults(obs_data_t* settings, Mode mode);
   void update(obs_data_t* settings);
   obs_properties_t* properties();
 
@@ -64,15 +74,26 @@ class FfglEffect {
   /// fleet's preset dropdowns do exactly that).
   void pushDirtyParams();
 
+  /// Add one parameter's widget to `props` — which is the group's property
+  /// list, not necessarily the root one.
+  void addParamProperty(obs_properties_t* props, const oxbow::FfglParam& param);
+
   /// The obs_data key for one FFGL parameter. Namespaced by the plugin's own
   /// four-character id so that switching plugin and switching back does not
   /// find the other plugin's values sitting in the same slots.
   std::string paramKey(const oxbow::FfglParam& param) const;
 
+  /// Where the frame size comes from. A filter inherits it from whatever it
+  /// is filtering; a source has nothing to inherit and must be told.
+  void resolveSourceSize(uint32_t& width, uint32_t& height) const;
+
   obs_source_t* self_ = nullptr;
+  Mode mode_ = Mode::filter;
 
   // What the operator asked for (UI thread writes, graphics thread reads).
   std::string requestedPath_;
+  uint32_t requestedWidth_ = 0;   //!< source mode; 0 means "follow the canvas"
+  uint32_t requestedHeight_ = 0;
 
   // What we actually have (graphics thread only).
   std::string loadedPath_;

@@ -22,9 +22,16 @@ namespace {
 using obsffgl::FfglEffect;
 
 const char* filterName(void*) { return obs_module_text("FfglEffect"); }
+const char* sourceName(void*) { return obs_module_text("FfglSource"); }
 
 void* filterCreate(obs_data_t* settings, obs_source_t* source) {
-  auto* effect = new FfglEffect(source);
+  auto* effect = new FfglEffect(source, FfglEffect::Mode::filter);
+  effect->update(settings);
+  return effect;
+}
+
+void* sourceCreate(obs_data_t* settings, obs_source_t* source) {
+  auto* effect = new FfglEffect(source, FfglEffect::Mode::source);
   effect->update(settings);
   return effect;
 }
@@ -35,7 +42,16 @@ void filterUpdate(void* data, obs_data_t* settings) {
   static_cast<FfglEffect*>(data)->update(settings);
 }
 
-void filterDefaults(obs_data_t* settings) { FfglEffect::defaults(settings); }
+void filterDefaults(obs_data_t* settings) {
+  FfglEffect::defaults(settings, FfglEffect::Mode::filter);
+}
+
+void sourceDefaults(obs_data_t* settings) {
+  FfglEffect::defaults(settings, FfglEffect::Mode::source);
+}
+
+uint32_t sourceWidth(void* data) { return static_cast<FfglEffect*>(data)->width(); }
+uint32_t sourceHeight(void* data) { return static_cast<FfglEffect*>(data)->height(); }
 
 obs_properties_t* filterProperties(void* data) {
   return static_cast<FfglEffect*>(data)->properties();
@@ -49,6 +65,7 @@ void filterRender(void* data, gs_effect_t* effect) {
 }
 
 struct obs_source_info ffglFilter = {};
+struct obs_source_info ffglSource = {};
 
 /// libobs is a C API with a Direct3D backend on Windows and OpenGL elsewhere.
 /// This plugin drives FFGL — which is an OpenGL format, by definition — so it
@@ -87,6 +104,25 @@ bool obs_module_load(void) {
   ffglFilter.video_render = filterRender;
 
   obs_register_source(&ffglFilter);
+
+  // The source form, for FFGL generators. OBS_SOURCE_CUSTOM_DRAW *is* right
+  // here — unlike on the filter — because this genuinely does its own drawing
+  // and has no default effect processing to opt out of.
+  ffglSource.id = "ffgl_source";
+  ffglSource.type = OBS_SOURCE_TYPE_INPUT;
+  ffglSource.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW;
+  ffglSource.get_name = sourceName;
+  ffglSource.create = sourceCreate;
+  ffglSource.destroy = filterDestroy;
+  ffglSource.update = filterUpdate;
+  ffglSource.get_defaults = sourceDefaults;
+  ffglSource.get_properties = filterProperties;
+  ffglSource.get_width = sourceWidth;
+  ffglSource.get_height = sourceHeight;
+  ffglSource.video_tick = filterTick;
+  ffglSource.video_render = filterRender;
+
+  obs_register_source(&ffglSource);
 
   // Deliberately NOT scanning here.
   //

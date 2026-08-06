@@ -81,13 +81,79 @@ def compare(before: np.ndarray, after: np.ndarray) -> tuple[int, int]:
     return differing, int(delta.max())
 
 
+def verify_sources(args) -> int:
+    """The ffgl_source input: an FFGL generator as a real OBS source.
+
+    There is no input picture here, so "it changed" is not available as a
+    check. What is left is that the output must have structure — a generator
+    that renders nothing, or that is handed a broken context, produces a flat
+    frame, and flat is the failure this catches.
+    """
+    args.outdir = args.outdir.resolve()
+    args.outdir.mkdir(parents=True, exist_ok=True)
+
+    obs = obsws.Obs(obsws.password_from_config())
+    original_scene = obs.call("GetCurrentProgramScene")["sceneName"]
+    obs.call("CreateScene", {"sceneName": SCENE})
+    failures = 0
+    try:
+        obs.call("SetCurrentProgramScene", {"sceneName": SCENE})
+        print(f"{'plugin (as source)':<28} {'min..max':>12}  result")
+        print("-" * 60)
+
+        for plugin in args.plugins:
+            name = plugin.stem
+            obs.call(
+                "CreateInput",
+                {
+                    "sceneName": SCENE,
+                    "inputName": SOURCE,
+                    "inputKind": "ffgl_source",
+                    "inputSettings": {
+                        "ffgl_plugin": str(plugin),
+                        "ffgl_width": args.width,
+                        "ffgl_height": args.height,
+                    },
+                },
+            )
+            time.sleep(1.2)
+
+            frame = screenshot(obs, SOURCE, args.width, args.height)
+            Image.fromarray(frame.astype(np.uint8)).save(args.outdir / f"source-{name}.png")
+
+            spread = int(frame.max()) - int(frame.min())
+            verdict = "ok" if spread >= 16 else f"FLAT ({frame.min()}..{frame.max()})"
+            failures += 0 if verdict == "ok" else 1
+            print(f"{name:<28} {int(frame.min()):>4}..{int(frame.max()):<6}  {verdict}")
+
+            obs.call("RemoveInput", {"inputName": SOURCE})
+            time.sleep(0.3)
+    finally:
+        obs.call("SetCurrentProgramScene", {"sceneName": original_scene})
+        obs.call("RemoveScene", {"sceneName": SCENE})
+        obs.close()
+
+    print(f"\nimages in {args.outdir}")
+    return 1 if failures else 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("plugins", nargs="+", type=pathlib.Path)
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=360)
     parser.add_argument("--outdir", type=pathlib.Path, default=pathlib.Path("build/verify"))
+    parser.add_argument(
+        "--source",
+        action="store_true",
+        help="test the ffgl_source input instead of the ffgl_effect filter. There is no "
+        "input picture to compare against, so the check is only that the output has "
+        "structure in it.",
+    )
     args = parser.parse_args()
+
+    if args.source:
+        return verify_sources(args)
 
     # Absolute, always. OBS resolves a relative path against *its own* working
     # directory, so a relative one loads nothing, the source reports 0x0, the

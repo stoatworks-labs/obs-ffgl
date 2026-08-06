@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <map>
 #include <vector>
 
 #include <graphics/graphics.h>
@@ -20,6 +21,8 @@ namespace obsffgl {
 namespace {
 
 constexpr const char* kPluginKey = "ffgl_plugin";
+constexpr const char* kWidthKey = "ffgl_width";
+constexpr const char* kHeightKey = "ffgl_height";
 
 /// Types that are a number the operator drags. Everything FFGL calls a colour
 /// component or a position is one of these too — FFGL has no vector type, it
@@ -56,7 +59,26 @@ GLuint glTextureName(gs_texture_t* texture) {
 
 }  // namespace
 
-FfglEffect::FfglEffect(obs_source_t* self) : self_(self) {}
+FfglEffect::FfglEffect(obs_source_t* self, Mode mode) : self_(self), mode_(mode) {}
+
+void FfglEffect::resolveSourceSize(uint32_t& width, uint32_t& height) const {
+  if (requestedWidth_ != 0 && requestedHeight_ != 0) {
+    width = requestedWidth_;
+    height = requestedHeight_;
+    return;
+  }
+  // "Follow the canvas" is the default, because a generator almost always
+  // wants to be the whole picture and an operator who changes the canvas
+  // should not have to remember to change this too.
+  obs_video_info video = {};
+  if (obs_get_video_info(&video) && video.base_width != 0 && video.base_height != 0) {
+    width = video.base_width;
+    height = video.base_height;
+    return;
+  }
+  width = 1920;
+  height = 1080;
+}
 
 FfglEffect::~FfglEffect() {
   // Destruction arrives on whatever thread released the last reference, and
@@ -70,8 +92,12 @@ FfglEffect::~FfglEffect() {
   obs_leave_graphics();
 }
 
-void FfglEffect::defaults(obs_data_t* settings) {
+void FfglEffect::defaults(obs_data_t* settings, Mode mode) {
   obs_data_set_default_string(settings, kPluginKey, "");
+  if (mode == Mode::source) {
+    obs_data_set_default_int(settings, kWidthKey, 0);
+    obs_data_set_default_int(settings, kHeightKey, 0);
+  }
 }
 
 std::string FfglEffect::paramKey(const oxbow::FfglParam& param) const {
@@ -83,6 +109,11 @@ std::string FfglEffect::paramKey(const oxbow::FfglParam& param) const {
 
 void FfglEffect::update(obs_data_t* settings) {
   requestedPath_ = obs_data_get_string(settings, kPluginKey);
+
+  if (mode_ == Mode::source) {
+    requestedWidth_ = static_cast<uint32_t>(obs_data_get_int(settings, kWidthKey));
+    requestedHeight_ = static_cast<uint32_t>(obs_data_get_int(settings, kHeightKey));
+  }
 
   // Parameter values are read here rather than in render so that the graphics
   // thread never touches obs_data. The vectors are sized by ensureInstance, so
@@ -124,11 +155,24 @@ obs_properties_t* FfglEffect::properties() {
   obs_property_list_add_string(list, obs_module_text("Plugin.None"), "");
 
   for (const CatalogEntry& entry : catalog()) {
+    // In source mode offer only FF_SOURCE plugins. An effect listed there
+    // would load and then render nothing, because there is no input for it to
+    // work on — a failure with no visible cause.
+    if (mode_ == Mode::source && !entry.isSource) continue;
+
     // The four-character id disambiguates the several plugins in this fleet
     // that ship two bundles differing only by a word ("Downpour" and
     // "Downpour Over").
     const std::string label = entry.name + "  [" + entry.uniqueId + "]";
     obs_property_list_add_string(list, label.c_str(), entry.path.c_str());
+  }
+
+  if (mode_ == Mode::source) {
+    // 0 means "follow the canvas", which is why these are plain numbers
+    // rather than a list of presets: a generator's size is a real choice and
+    // the useful values are not a fixed set.
+    obs_properties_add_int(props, kWidthKey, obs_module_text("Width"), 0, 16384, 2);
+    obs_properties_add_int(props, kHeightKey, obs_module_text("Height"), 0, 16384, 2);
   }
 
   // Changing the plugin has to rebuild the rest of the dialog, because the
@@ -145,29 +189,76 @@ obs_properties_t* FfglEffect::properties() {
 
   if (library_ == nullptr) return props;
 
+  // Parameters go into the plugin's own groups, in the order the groups first
+  // appear, so the dialog reads the way the plugin's author laid it out and
+  // the way Resolume shows it. Anything ungrouped stays at the top level.
+  std::vector<std::string> groupOrder;
+  std::map<std::string, obs_properties_t*> groups;
+
   const oxbow::FfglInfo& info = library_->info();
   for (const oxbow::FfglParam& param : info.params) {
-    const std::string key = paramKey(param);
-    const char* label = param.name.c_str();
-
-    if (isToggleType(param.type)) {
-      obs_properties_add_bool(props, key.c_str(), label);
-    } else if (param.type == FF_TYPE_TEXT) {
-      obs_properties_add_text(props, key.c_str(), label, OBS_TEXT_DEFAULT);
-    } else if (param.type == FF_TYPE_FILE) {
-      obs_properties_add_path(props, key.c_str(), label, OBS_PATH_FILE, nullptr, nullptr);
-    } else if (isSliderType(param.type)) {
-      // The range is the plugin's own, from FF_GET_RANGE, and defaults to
-      // 0..1 when the plugin does not answer — which is FFGL's normalised
-      // convention and what Resolume shows.
-      const float min = param.rangeMin;
-      const float max = param.rangeMax > param.rangeMin ? param.rangeMax : param.rangeMin + 1.0f;
-      const double step = (max - min) / 1000.0;
-      obs_properties_add_float_slider(props, key.c_str(), label, min, max, step);
+    obs_properties_t* target = props;
+    if (!param.group.empty()) {
+      auto existing = groups.find(param.group);
+      if (existing == groups.end()) {
+        groupOrder.push_back(param.group);
+        existing = groups.emplace(param.group, obs_properties_create()).first;
+      }
+      target = existing->second;
     }
+    addParamProperty(target, param);
+  }
+
+  for (const std::string& name : groupOrder) {
+    obs_properties_add_group(props, name.c_str(), name.c_str(), OBS_GROUP_NORMAL,
+                             groups[name]);
   }
 
   return props;
+}
+
+void FfglEffect::addParamProperty(obs_properties_t* props, const oxbow::FfglParam& param) {
+  const std::string key = paramKey(param);
+  const char* label = param.name.c_str();
+
+  if (isToggleType(param.type)) {
+    obs_properties_add_bool(props, key.c_str(), label);
+    return;
+  }
+  if (param.type == FF_TYPE_TEXT) {
+    obs_properties_add_text(props, key.c_str(), label, OBS_TEXT_DEFAULT);
+    return;
+  }
+  if (param.type == FF_TYPE_FILE) {
+    obs_properties_add_path(props, key.c_str(), label, OBS_PATH_FILE, nullptr, nullptr);
+    return;
+  }
+
+  // A real dropdown, with the plugin's own entries and the value each stands
+  // for. FF_GET_RANGE is not answered for option parameters, so the 0..1 it
+  // falls back to is meaningless here — Porthole's Quality reports 0..1 while
+  // its elements run 0..4, and as a slider it was simply wrong.
+  if (param.type == FF_TYPE_OPTION && !param.elements.empty()) {
+    obs_property_t* list = obs_properties_add_list(
+        props, key.c_str(), label, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_FLOAT);
+    for (size_t i = 0; i < param.elements.size(); ++i) {
+      const double value = i < param.elementValues.size()
+                               ? param.elementValues[i]
+                               : static_cast<double>(i);
+      obs_property_list_add_float(list, param.elements[i].c_str(), value);
+    }
+    return;
+  }
+
+  if (isSliderType(param.type)) {
+    // The range is the plugin's own, from FF_GET_RANGE, and defaults to
+    // 0..1 when the plugin does not answer — which is FFGL's normalised
+    // convention and what Resolume shows.
+    const float min = param.rangeMin;
+    const float max = param.rangeMax > param.rangeMin ? param.rangeMax : param.rangeMin + 1.0f;
+    const double step = (max - min) / 1000.0;
+    obs_properties_add_float_slider(props, key.c_str(), label, min, max, step);
+  }
 }
 
 void FfglEffect::destroyInstance() {
@@ -296,21 +387,47 @@ void FfglEffect::pushDirtyParams() {
 
 void FfglEffect::tick(float seconds) { time_ += seconds; }
 
-uint32_t FfglEffect::width() const { return instanceWidth_; }
-uint32_t FfglEffect::height() const { return instanceHeight_; }
+// OBS asks a source how big it is *before* it has ever rendered, so these
+// cannot report the live instance's size — that is still zero at the point it
+// matters, and a source reporting 0x0 is never drawn and so never gets an
+// instance. Resolve from the settings instead.
+uint32_t FfglEffect::width() const {
+  if (mode_ != Mode::source) return instanceWidth_;
+  uint32_t width = 0, height = 0;
+  resolveSourceSize(width, height);
+  return width;
+}
+
+uint32_t FfglEffect::height() const {
+  if (mode_ != Mode::source) return instanceHeight_;
+  uint32_t width = 0, height = 0;
+  resolveSourceSize(width, height);
+  return height;
+}
 
 void FfglEffect::render() {
-  obs_source_t* target = obs_filter_get_target(self_);
-  if (target == nullptr) {
-    obs_source_skip_video_filter(self_);
-    return;
-  }
+  uint32_t width = 0;
+  uint32_t height = 0;
+  GLuint inputName = 0;
 
-  const uint32_t width = obs_source_get_base_width(target);
-  const uint32_t height = obs_source_get_base_height(target);
-  if (width == 0 || height == 0 || !ensureInstance(width, height)) {
-    obs_source_skip_video_filter(self_);
-    return;
+  if (mode_ == Mode::source) {
+    resolveSourceSize(width, height);
+    // A source has nothing to fall back to: if it cannot render it draws
+    // nothing at all, rather than skipping a filter that does not exist.
+    if (width == 0 || height == 0 || !ensureInstance(width, height)) return;
+  } else {
+    obs_source_t* target = obs_filter_get_target(self_);
+    if (target == nullptr) {
+      obs_source_skip_video_filter(self_);
+      return;
+    }
+
+    width = obs_source_get_base_width(target);
+    height = obs_source_get_base_height(target);
+    if (width == 0 || height == 0 || !ensureInstance(width, height)) {
+      obs_source_skip_video_filter(self_);
+      return;
+    }
   }
 
   // ---- 1. the input, as a texture ----------------------------------------
@@ -333,28 +450,32 @@ void FfglEffect::render() {
   // the filter properly and let OBS's own machinery render it *into* our
   // texrender: process_filter_begin, then process_filter_end inside the
   // texrender's scope.
-  if (!obs_source_process_filter_begin(self_, GS_RGBA, OBS_NO_DIRECT_RENDERING)) {
-    obs_source_skip_video_filter(self_);
-    return;
+  // A source plugin has no input; skip the capture entirely and leave the
+  // texture handle at 0, which is what tells FFGL there are no input textures.
+  if (mode_ == Mode::filter) {
+    if (!obs_source_process_filter_begin(self_, GS_RGBA, OBS_NO_DIRECT_RENDERING)) {
+      obs_source_skip_video_filter(self_);
+      return;
+    }
+
+    gs_texrender_reset(inputRender_);
+    if (!gs_texrender_begin(inputRender_, width, height)) {
+      obs_source_skip_video_filter(self_);
+      return;
+    }
+
+    struct vec4 clear;
+    vec4_zero(&clear);
+    gs_clear(GS_CLEAR_COLOR, &clear, 0.0f, 0);
+    gs_ortho(0.0f, static_cast<float>(width), 0.0f, static_cast<float>(height), -100.0f, 100.0f);
+    gs_blend_state_push();
+    gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
+    obs_source_process_filter_end(self_, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
+    gs_blend_state_pop();
+    gs_texrender_end(inputRender_);
+
+    inputName = glTextureName(gs_texrender_get_texture(inputRender_));
   }
-
-  gs_texrender_reset(inputRender_);
-  if (!gs_texrender_begin(inputRender_, width, height)) {
-    obs_source_skip_video_filter(self_);
-    return;
-  }
-
-  struct vec4 clear;
-  vec4_zero(&clear);
-  gs_clear(GS_CLEAR_COLOR, &clear, 0.0f, 0);
-  gs_ortho(0.0f, static_cast<float>(width), 0.0f, static_cast<float>(height), -100.0f, 100.0f);
-  gs_blend_state_push();
-  gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
-  obs_source_process_filter_end(self_, obs_get_base_effect(OBS_EFFECT_DEFAULT), width, height);
-  gs_blend_state_pop();
-  gs_texrender_end(inputRender_);
-
-  const GLuint inputName = glTextureName(gs_texrender_get_texture(inputRender_));
 
   // ---- 2. point OBS at our output, then ask GL what that means ------------
   //
@@ -504,7 +625,7 @@ void FfglEffect::render() {
       blog(LOG_WARNING, "[obs-ffgl] %s: ProcessOpenGL failed", loadedPath_.c_str());
       reportedFailure_ = true;
     }
-    obs_source_skip_video_filter(self_);
+    if (mode_ == Mode::filter) obs_source_skip_video_filter(self_);
     return;
   }
 

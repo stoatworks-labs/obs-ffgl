@@ -101,3 +101,22 @@ very different failures look identical.
 
 The honest control for "is this our bug or the plugin's" is
 `oxbow selftest <bundle>`. Old Cathode and Coinop fail identically there.
+
+## The source form
+
+`ffgl_source` (OBS_SOURCE_TYPE_INPUT) exists because an FFGL generator has no
+input, and making it a filter forces the operator to invent a picture
+underneath that is then thrown away.
+
+`get_width`/`get_height` **cannot** report the live instance's size. OBS asks a
+source how big it is before it has ever rendered; reporting 0 means the source
+is never drawn, so it never gets an instance, so it reports 0 forever. Resolve
+from the settings instead (0 means "follow the canvas").
+
+`OBS_SOURCE_CUSTOM_DRAW` **is** correct here, unlike on the filter — this one
+genuinely does its own drawing and has no default effect processing to opt out
+of.
+
+The plugin list is filtered to `FF_SOURCE` in this mode. An effect offered
+there would load and render nothing, with no visible cause. Outrun is the one
+to test against: it looks like a generator and declares itself an effect.
