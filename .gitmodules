@@ -1,0 +1,3 @@
+[submodule "third_party/oxbow"]
+	path = third_party/oxbow
+	url = https://github.com/stoatworks-labs/oxbow.git

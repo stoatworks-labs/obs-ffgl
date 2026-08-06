@@ -1,0 +1,5 @@
+build/
+third_party/obs-studio/
+third_party/simde/
+third_party/obs-generated/
+.DS_Store
