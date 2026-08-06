@@ -5,3 +5,6 @@ third_party/obs-generated/
 .DS_Store
 __pycache__/
 *.pyc
+build-*/
+third_party/obs-apple/
+third_party/obs-intel/

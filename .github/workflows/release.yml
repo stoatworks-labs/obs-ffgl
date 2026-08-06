@@ -1,0 +1,120 @@
+# Tag v* → build a universal macOS plugin bundle, zip it with the licence and
+# README, and attach it to a draft GitHub release.
+#
+# macOS only, and one job rather than a matrix, because the universal binary
+# here cannot be made the usual way.
+#
+# **`-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64` does not work for this project.**
+# The plugin links the libobs inside an OBS.app, and OBS ships *separate* Apple
+# Silicon and Intel builds whose libobs is single-architecture — arm64-only in
+# the Apple download. A universal link against an arm64-only library fails, and
+# building only the arch that happens to match the runner would silently ship an
+# Apple-Silicon-only plugin.
+#
+# So each slice is built against its own OBS, and the two Mach-Os are lipo'd
+# together afterwards. GitHub has no Intel macOS runners any more, so the x86_64
+# slice is cross-compiled on macos-14 — which is fine, because nothing here runs
+# during the build.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  OBS_VERSION: "32.1.2"
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Fetch third-party headers
+        run: ./scripts/bootstrap.sh
+
+      - name: Fetch both OBS builds
+        run: |
+          set -euo pipefail
+          for arch in apple intel; do
+            curl -fsSL -o "obs-$arch.dmg" \
+              "https://cdn-fastly.obsproject.com/downloads/obs-studio-${OBS_VERSION}-macos-$arch.dmg"
+            hdiutil attach "obs-$arch.dmg" -nobrowse -quiet -mountpoint "/Volumes/OBS-$arch"
+            mkdir -p "third_party/obs-$arch"
+            cp -R "/Volumes/OBS-$arch/OBS.app" "third_party/obs-$arch/"
+            hdiutil detach "/Volumes/OBS-$arch" -quiet
+          done
+          echo "arm64 libobs: $(lipo -archs third_party/obs-apple/OBS.app/Contents/Frameworks/libobs.framework/Versions/A/libobs)"
+          echo "x86_64 libobs: $(lipo -archs third_party/obs-intel/OBS.app/Contents/Frameworks/libobs.framework/Versions/A/libobs)"
+
+      - name: Build both slices
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-arm64 -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_OSX_ARCHITECTURES=arm64 \
+                -DOBS_APP="$PWD/third_party/obs-apple/OBS.app"
+          cmake --build build-arm64 --config Release
+
+          cmake -S . -B build-x86_64 -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+                -DOBS_APP="$PWD/third_party/obs-intel/OBS.app"
+          cmake --build build-x86_64 --config Release
+
+      - name: Combine into one universal bundle
+        run: |
+          set -euo pipefail
+          # The arm64 build is the bundle we keep; only its Mach-O is replaced.
+          BUNDLE=build-arm64/obs-ffgl.plugin
+          lipo -create \
+            build-arm64/obs-ffgl.plugin/Contents/MacOS/obs-ffgl \
+            build-x86_64/obs-ffgl.plugin/Contents/MacOS/obs-ffgl \
+            -output "$BUNDLE/Contents/MacOS/obs-ffgl"
+
+          # Not `lipo … | grep -q`: Actions runs `shell: bash` as `bash -eo
+          # pipefail`, and a grep -q that FINDS its match exits at once, so lipo
+          # takes SIGPIPE and the pipeline reports failure — which would fail the
+          # release on a correct universal binary. The match is also not
+          # order-dependent, because lipo does not promise the order it lists in.
+          __archs=$( lipo -archs "$BUNDLE/Contents/MacOS/obs-ffgl" )
+          case "$__archs" in
+            *x86_64*arm64*|*arm64*x86_64*) echo "universal: $__archs" ;;
+            *) echo "expected a universal binary, got: $__archs"; exit 1 ;;
+          esac
+
+          test -f "$BUNDLE/Contents/Resources/locale/en-US.ini"
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          STAGE="obs-ffgl-$VERSION-macos-universal"
+          mkdir "$STAGE"
+          cp -R build-arm64/obs-ffgl.plugin "$STAGE/"
+          cp README.md LICENSE "$STAGE/"
+          cp docs/USER-GUIDE.md "$STAGE/" || true
+          zip -ry "$STAGE.zip" "$STAGE"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: obs-ffgl-macos-universal
+          path: obs-ffgl-*.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: obs-ffgl-*.zip
