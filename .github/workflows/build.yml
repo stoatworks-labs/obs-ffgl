@@ -1,0 +1,69 @@
+# Build the plugin on macOS, which is the only platform it currently supports.
+#
+# There is no Windows or Linux job on purpose: the module refuses to register
+# unless OBS is on its OpenGL backend, and FFGL is an OpenGL format. A Windows
+# job would compile something that cannot run.
+#
+# The runner has no OBS.app, so the build cannot link against a user's install
+# the way a local build does. It fetches the matching libobs from obs-studio's
+# own release instead — see the step below.
+
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Fetch third-party headers
+        run: ./scripts/bootstrap.sh
+
+      # libobs itself, rather than a whole OBS.app. The plugin links one dylib
+      # and the CI only needs to prove it compiles and links; whether it loads
+      # is a question only a real OBS can answer, and that is what tools/verify.py
+      # is for.
+      - name: Fetch libobs
+        run: |
+          set -euo pipefail
+          curl -fsSL -o obs.dmg \
+            https://cdn-fastly.obsproject.com/downloads/obs-studio-32.1.2-macos-apple.dmg
+          hdiutil attach obs.dmg -nobrowse -quiet -mountpoint /Volumes/OBS
+          mkdir -p third_party/obs-app
+          cp -R "/Volumes/OBS/OBS.app" third_party/obs-app/
+          hdiutil detach /Volumes/OBS -quiet
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+                -DOBS_APP="$PWD/third_party/obs-app/OBS.app"
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      # The bundle must exist and must actually link libobs. A plugin that
+      # builds but resolves no libobs symbols would load into OBS and do
+      # nothing, which is the failure this catches cheaply.
+      - name: Check the bundle
+        run: |
+          set -euo pipefail
+          BIN=build/obs-ffgl.plugin/Contents/MacOS/obs-ffgl
+          test -f "$BIN"
+          test -f build/obs-ffgl.plugin/Contents/Resources/locale/en-US.ini
+          otool -L "$BIN" | grep -q 'libobs.framework'
+          echo "linked against libobs:"
+          otool -L "$BIN" | grep libobs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: obs-ffgl-macos
+          path: build/obs-ffgl.plugin
+          if-no-files-found: error
