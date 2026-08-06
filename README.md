@@ -93,6 +93,10 @@ pixel and would otherwise pass. Images land in `build/verify/`.
 `OBS_FFGL_DEBUG=1..4` adds per-frame diagnostics; `4` dumps the input and
 output textures to `/tmp` as PPMs. See `src/ffgl_effect.cpp`.
 
+<!-- attributions:start -->
+This project is built on other people's work — see [ATTRIBUTIONS.md](ATTRIBUTIONS.md).
+<!-- attributions:end -->
+
 ## Licence
 
 MIT (see `LICENSE`). Note that a binary linking libobs is subject to OBS's
