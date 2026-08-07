@@ -25,6 +25,8 @@ round-trip version for hosts that have no plugin interface at all (vMix). This
 repo compiles oxbow's FFGL host core directly from a submodule rather than
 copying it, so there is exactly one implementation of the format.
 
+**Video:** [What it does, in 50 seconds](https://www.youtube.com/watch?v=lAqGsz5TQqI)
+
 ## Status
 
 **Early, but the render path is real and measured.** Of 22 FFGL bundles from
