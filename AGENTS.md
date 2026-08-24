@@ -120,3 +120,10 @@ of.
 The plugin list is filtered to `FF_SOURCE` in this mode. An effect offered
 there would load and render nothing, with no visible cause. Outrun is the one
 to test against: it looks like a generator and declares itself an effect.
+
+## Notes
+
+`docs/NOTES.md` carries this repo's working notes — current status, decisions
+already made, and the traps that have actually bitten. Read it before changing
+anything non-obvious. Cross-cutting fleet knowledge lives in
+[fleet-notes](https://github.com/stoatworks-labs/fleet-notes).
