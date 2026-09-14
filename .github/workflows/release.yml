@@ -114,7 +114,13 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
+      # Published, not drafted. This used to say `draft: true` on the theory that
+      # the fleet's auto-signer would re-sign the macOS artefact "after the
+      # release appears" -- but auto-sign-watch.sh reads each repo's *latest
+      # published* release, so a draft never appears to it at all. The
+      # last tag sat as an unsigned, unpublished draft for ten days
+      # because of this; v0.1.2 was published by hand on 2026-09-14.
       - uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          generate_release_notes: true
           files: obs-ffgl-*.zip
