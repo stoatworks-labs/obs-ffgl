@@ -31,14 +31,14 @@ copying it, so there is exactly one implementation of the format.
 
 ## Download
 
-**[v0.1.1](https://github.com/stoatworks-labs/obs-ffgl/releases/tag/v0.1.1)** — prebuilt for macOS. Pick your platform:
+**[v0.1.2](https://github.com/stoatworks-labs/obs-ffgl/releases/tag/v0.1.2)** — prebuilt for macOS. Pick your platform:
 
 <details>
 <summary><b>macOS</b> — Universal (Apple Silicon + Intel)</summary>
 
 | Build | Download | Size |
 | --- | --- | --- |
-| Universal (Apple Silicon + Intel) · .zip archive | [`obs-ffgl-0.1.1-macos-universal.zip`](https://github.com/stoatworks-labs/obs-ffgl/releases/download/v0.1.1/obs-ffgl-0.1.1-macos-universal.zip) | 101 KB |
+| Universal (Apple Silicon + Intel) · .zip archive | [`obs-ffgl-0.1.2-macos-universal.zip`](https://github.com/stoatworks-labs/obs-ffgl/releases/download/v0.1.2/obs-ffgl-0.1.2-macos-universal.zip) | 101 KB |
 
 </details>
 
