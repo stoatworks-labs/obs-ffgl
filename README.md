@@ -2,28 +2,28 @@
 
 > **AI-assisted project.** This codebase was created with [Claude](https://claude.com/claude-code)
 > (Anthropic), directed and reviewed by a human author. The render path has been
-> verified against 22 real FFGL bundles inside a real OBS Studio — see
-> [Status](#status) for exactly what that does and does not cover.
+> verified against 22 FFGL bundles inside a running OBS Studio, and
+> [Status](#status) says what that does and doesn't cover.
 
-Run FreeFrame (FFGL) video plugins **natively inside OBS Studio**.
+Run FreeFrame (FFGL) video plugins natively inside OBS Studio.
 
 OBS has no FFGL support, and the usual workaround is a network round trip: send
-a source out over NDI, run the effect in another application, bring it back.
-`obs-ffgl` removes the trip. It loads any FFGL 2.x bundle, reads the plugin's
-own parameters into OBS's properties — groups, dropdowns and all — and renders
-it **in OBS's own OpenGL context**: no second context, no readback, no copy
-back over the network.
+a source out over NDI, run the effect in another application, and bring it back
+again, trusting the network to behave. `obs-ffgl` cuts out the trip. It loads
+any FFGL 2.x bundle, reads the plugin's own parameters into OBS's properties
+(groups, dropdowns and all) and renders it in OBS's own OpenGL context, so
+there's no second context, no readback and no copy back over the network.
 
 Two things get registered:
 
 - **FFGL Effect**, a filter, for FFGL effects.
-- **FFGL Source**, an input, for FFGL generators — so a generator is a source
+- **FFGL Source**, an input, for FFGL generators, so a generator is a source
   in its own right rather than a filter on some throwaway picture underneath.
 
-Companion to [oxbow](https://github.com/stoatworks-labs/oxbow), which does the
-round-trip version for hosts that have no plugin interface at all (vMix). This
-repo compiles oxbow's FFGL host core directly from a submodule rather than
-copying it, so there is exactly one implementation of the format.
+It's a companion to [oxbow](https://github.com/stoatworks-labs/oxbow), which does
+the round-trip version for hosts with no plugin interface at all (vMix). This
+repo compiles oxbow's FFGL host core straight from a submodule rather than
+copying it, so there's only one implementation of the format.
 
 **Video:** [What it does, in 50 seconds](https://www.youtube.com/watch?v=lAqGsz5TQqI)
 
@@ -50,8 +50,9 @@ macOS builds are signed and notarised by Apple, so they open normally — no Gat
 
 ## Status
 
-**Early, but the render path is real and measured.** Of 22 FFGL bundles from
-this fleet, driven through a real OBS 32.1.2 and compared per pixel:
+**Early days, but the render path is there and it's measured.** Of 22 FFGL
+bundles from this fleet, driven through an actual OBS 32.1.2 and compared per
+pixel:
 
 | result | count | which |
 |---|---|---|
@@ -60,13 +61,13 @@ this fleet, driven through a real OBS 32.1.2 and compared per pixel:
 | pre-existing plugin bugs | 2 | Old Cathode (`FF_INSTANTIATE_GL` fails), Coinop (`ProcessOpenGL` fails) — **both fail identically under oxbow**, so they are not this plugin's doing |
 | correct refusal | 1 | `ofxwrapper` — the OFX bridge shell with no guest bundle |
 
-As **sources**, the three FFGL generators in this fleet — Downpour, Orrery and
-Idler — all render. (Outrun declares itself an effect, so the source list does
-not offer it.)
+As sources, the three FFGL generators in this fleet (Downpour, Orrery and
+Idler) all render. Outrun declares itself an effect, so the source list doesn't
+offer it.
 
 **macOS only, and only on OBS's OpenGL renderer.** FFGL is an OpenGL format; if
 OBS is running its Metal or D3D11 backend the module logs why and registers
-nothing rather than producing black. Windows and Linux are not built.
+nothing, rather than producing black. Windows and Linux aren't built.
 
 **Not done:** audio-reactive `FF_TYPE_BUFFER` parameters, and anything that
 needs OBS to drive the plugin's clock other than wall time.
@@ -97,7 +98,7 @@ $OBS_FFGL_PATH                                     (colon-separated, wins)
 ~/Documents/Resolume {Arena,Avenue}/Extra Effects
 ```
 
-The filter's properties dialog lists these, so a plugin that does not appear
+The filter's properties dialog lists these, so a plugin that doesn't appear
 tells you where to look without a round trip.
 
 ## Verifying
@@ -107,10 +108,10 @@ python3 tools/verify.py ~/Projects/porthole/build/Porthole.bundle …
 python3 tools/verify.py --source ~/Projects/downpour/build/Downpour.bundle …
 ```
 
-Drives a running OBS over obs-websocket: builds a test card with hard edges,
+It drives a running OBS over obs-websocket: builds a test card with hard edges,
 screenshots it, attaches the filter, screenshots again, and compares. It
 rejects both "nothing changed" **and** a flat output, because a plugin handed a
-bad input texture renders uniform black — which differs from the input in every
+bad input texture renders uniform black, which differs from the input in every
 pixel and would otherwise pass. Images land in `build/verify/`.
 
 `OBS_FFGL_DEBUG=1..4` adds per-frame diagnostics; `4` dumps the input and
