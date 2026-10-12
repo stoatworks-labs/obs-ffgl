@@ -61,7 +61,7 @@ pixel:
 | pre-existing plugin bugs | 2 | Old Cathode (`FF_INSTANTIATE_GL` fails), Coinop (`ProcessOpenGL` fails) — **both fail identically under oxbow**, so they are not this plugin's doing |
 | correct refusal | 1 | `ofxwrapper` — the OFX bridge shell with no guest bundle |
 
-As sources, the three FFGL generators in this fleet (Downpour, Orrery and
+As sources, the three FFGL generators I tested (Downpour, Orrery and
 Idler) all render. Outrun declares itself an effect, so the source list doesn't
 offer it.
 
